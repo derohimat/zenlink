@@ -5,11 +5,11 @@
 ; ports, so a v2.2.31 Portable.exe still runs next to it. To roll back, run the
 ; v2.2.31 Setup.exe from its GitHub release.
 #ifndef AppVersion
-  #define AppVersion "2.5.1"
+  #define AppVersion "2.5.2"
 #endif
 #ifndef AppVersionNum
   ; Numeric part only: VersionInfoVersion must be n.n.n.n.
-  #define AppVersionNum "2.5.1"
+  #define AppVersionNum "2.5.2"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\dist\ZenLink"

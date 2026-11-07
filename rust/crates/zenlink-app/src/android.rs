@@ -958,6 +958,16 @@ pub fn find_adb() -> Option<PathBuf> {
                 .join(exe),
         );
     }
+    if let Some(home) = std::env::var_os("HOME") {
+        c.push(
+            Path::new(&home)
+                .join("Library")
+                .join("Android")
+                .join("sdk")
+                .join("platform-tools")
+                .join(exe),
+        );
+    }
     if let Some(path) = std::env::var_os("PATH") {
         c.extend(std::env::split_paths(&path).map(|d| d.join(exe)));
     }

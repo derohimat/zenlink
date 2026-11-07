@@ -6,19 +6,28 @@
 //! too; no extra thread. A second `ZenLink.exe` finds that window, asks it to
 //! show the running ZenLink, and exits.
 
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 
+#[cfg(windows)]
+use std::cell::{Cell, RefCell};
+#[cfg(windows)]
+use std::rc::Rc;
+
+#[cfg(windows)]
 use windows::core::{w, PCWSTR};
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+#[cfg(windows)]
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+#[cfg(windows)]
 use windows::Win32::System::Registry::{
     RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW, HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_SZ,
 };
+#[cfg(windows)]
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
 };
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, FindWindowW,
     GetCursorPos, GetSystemMetrics, LoadIconW, LoadImageW, PostMessageW, RegisterClassW,
@@ -28,14 +37,23 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
 };
 
+#[cfg(windows)]
 const CLASS: PCWSTR = w!("ZenLinkTrayV25");
+#[cfg(windows)]
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
+#[cfg(windows)]
 const RUN_VALUE: PCWSTR = w!("ZenLink");
+
 /// Command-line flag of the "Start with Windows" entry.
 pub const BACKGROUND_ARG: &str = "--background";
+
+#[cfg(windows)]
 const WM_TRAY: u32 = WM_APP + 0x51;
+#[cfg(windows)]
 const WM_SHOW_OTHER: u32 = WM_APP + 0x52;
+#[cfg(windows)]
 const ID_OPEN: usize = 1;
+#[cfg(windows)]
 const ID_QUIT: usize = 2;
 
 /// What the tray asks the window to do.
@@ -48,11 +66,13 @@ pub enum Event {
     Quit,
 }
 
+#[cfg(windows)]
 type Handler = Rc<dyn Fn(Event)>;
 
 /// True while the window is hidden in the tray (no work for it then).
 pub static HIDDEN: AtomicBool = AtomicBool::new(false);
 
+#[cfg(windows)]
 thread_local! {
     static HWND_TRAY: Cell<Option<isize>> = const { Cell::new(None) };
     static HANDLER: RefCell<Option<Handler>> = const { RefCell::new(None) };
@@ -61,12 +81,14 @@ thread_local! {
     static TASKBAR_CREATED: Cell<u32> = const { Cell::new(0) };
 }
 
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// When another ZenLink v2.5 runs for this user: ask it to show its window
 /// and return true (the caller exits).
+#[cfg(windows)]
 pub fn show_running_instance() -> bool {
     match unsafe { FindWindowW(CLASS, PCWSTR::null()) } {
         Ok(h) if !h.is_invalid() => {
@@ -77,8 +99,14 @@ pub fn show_running_instance() -> bool {
     }
 }
 
+#[cfg(not(windows))]
+pub fn show_running_instance() -> bool {
+    false
+}
+
 /// Creates the helper window. `handler` runs on the UI thread; it should
 /// defer Slint work with `slint::invoke_from_event_loop`.
+#[cfg(windows)]
 pub fn install(handler: impl Fn(Event) + 'static) {
     HANDLER.with_borrow_mut(|h| *h = Some(Rc::new(handler)));
     unsafe {
@@ -93,8 +121,6 @@ pub fn install(handler: impl Fn(Event) + 'static) {
         };
         RegisterClassW(&wc);
         TASKBAR_CREATED.set(RegisterWindowMessageW(w!("TaskbarCreated")));
-        // A normal (never shown) top-level window: message-only windows do not
-        // get "TaskbarCreated" after Explorer restarts.
         if let Ok(h) = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             CLASS,
@@ -114,7 +140,11 @@ pub fn install(handler: impl Fn(Event) + 'static) {
     }
 }
 
+#[cfg(not(windows))]
+pub fn install(_handler: impl Fn(Event) + 'static) {}
+
 /// Shows or removes the tray icon and sets the menu language.
+#[cfg(windows)]
 pub fn set_icon(on: bool, open: &str, quit: &str) {
     LABELS.with_borrow_mut(|l| *l = (open.to_string(), quit.to_string()));
     if on == ICON_ON.get() {
@@ -125,6 +155,10 @@ pub fn set_icon(on: bool, open: &str, quit: &str) {
     }
 }
 
+#[cfg(not(windows))]
+pub fn set_icon(_on: bool, _open: &str, _quit: &str) {}
+
+#[cfg(windows)]
 fn notify(op: windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE) -> bool {
     let Some(h) = HWND_TRAY.get() else {
         return false;
@@ -144,7 +178,7 @@ fn notify(op: windows::Win32::UI::Shell::NOTIFY_ICON_MESSAGE) -> bool {
     unsafe { Shell_NotifyIconW(op, &nid).as_bool() }
 }
 
-/// The exe's icon (resource 1, see build.rs) at the small-icon size.
+#[cfg(windows)]
 fn app_icon() -> HICON {
     unsafe {
         let module = GetModuleHandleW(None).ok();
@@ -163,14 +197,15 @@ fn app_icon() -> HICON {
     }
 }
 
+#[cfg(windows)]
 fn emit(e: Event) {
-    // Clone out first: the handler may run while a menu loop is open.
     let h = HANDLER.with_borrow(|h| h.clone());
     if let Some(h) = h {
         h(e);
     }
 }
 
+#[cfg(windows)]
 fn menu(hwnd: HWND) -> Option<Event> {
     let (open, quit) = LABELS.with_borrow(|l| (wide(&l.0), wide(&l.1)));
     unsafe {
@@ -180,7 +215,6 @@ fn menu(hwnd: HWND) -> Option<Event> {
         let _ = AppendMenuW(m, MF_STRING, ID_QUIT, PCWSTR(quit.as_ptr()));
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
-        // Without this the menu does not close when the user clicks elsewhere.
         let _ = SetForegroundWindow(hwnd);
         let cmd = TrackPopupMenu(
             m,
@@ -201,6 +235,7 @@ fn menu(hwnd: HWND) -> Option<Event> {
     }
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_TRAY => {
@@ -220,7 +255,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             LRESULT(0)
         }
         m if m != 0 && m == TASKBAR_CREATED.get() => {
-            // Explorer restarted: the icon is gone, add it again.
             if ICON_ON.get() {
                 notify(NIM_ADD);
             }
@@ -235,7 +269,7 @@ pub fn run_command(exe: &std::path::Path) -> String {
     format!("\"{}\" {BACKGROUND_ARG}", exe.display())
 }
 
-/// The current HKCU Run value, if any.
+#[cfg(windows)]
 fn run_value() -> Option<String> {
     let mut buf = vec![0u16; 1024];
     let mut len = (buf.len() * 2) as u32;
@@ -257,10 +291,7 @@ fn run_value() -> Option<String> {
     Some(String::from_utf16_lossy(&buf[..n]))
 }
 
-/// Writes or removes the HKCU Run entry. Only the user's own key: no admin
-/// rights, no scheduled task, nothing hidden (AGENTS.md §3c). Removing at
-/// start-up ("off") only touches an entry that points to this exe, so a
-/// second copy that the user set to start is left alone.
+#[cfg(windows)]
 pub fn set_start_with_windows(on: bool, user_action: bool) {
     let Ok(exe) = std::env::current_exe() else {
         return;
@@ -288,6 +319,9 @@ pub fn set_start_with_windows(on: bool, user_action: bool) {
         let _ = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE) };
     }
 }
+
+#[cfg(not(windows))]
+pub fn set_start_with_windows(_on: bool, _user_action: bool) {}
 
 #[cfg(test)]
 mod tests {

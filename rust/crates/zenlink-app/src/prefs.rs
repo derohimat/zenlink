@@ -10,7 +10,14 @@ fn path() -> Option<std::path::PathBuf> {
     if let Some(p) = std::env::var_os("ZL_PREFS") {
         return Some(p.into());
     }
+    #[cfg(windows)]
     let base = std::env::var_os("APPDATA")?;
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library").join("Application Support"))?;
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
     let dir = zenlink_core::data_dir_in(std::path::Path::new(&base));
     let _ = std::fs::create_dir_all(&dir);
     Some(dir.join("next-prefs.json"))

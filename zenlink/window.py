@@ -10,10 +10,11 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 
-_user32 = ctypes.windll.user32
-_user32.MonitorFromWindow.restype = ctypes.c_void_p
-_user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-_WM_NCLBUTTONDOWN = 0x00A1
+_user32 = getattr(ctypes, "windll", None) and getattr(ctypes.windll, "user32", None)
+if _user32:
+    _user32.MonitorFromWindow.restype = ctypes.c_void_p
+    _user32.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+_WM_NCLBUTTONDOWN = 0x08A1 if not _user32 else 0x00A1
 _HT = {"left": 10, "right": 11, "top": 12, "topleft": 13, "topright": 14,
        "bottom": 15, "bottomleft": 16, "bottomright": 17}
 
@@ -36,7 +37,7 @@ class WindowApi:
         self._normal_rect = None
 
     def _hwnd(self) -> int | None:
-        return _user32.FindWindowW(None, TITLE) or None
+        return (_user32.FindWindowW(None, TITLE) or None) if _user32 else None
 
     def start_resize(self, edge: str) -> None:
         hwnd = self._hwnd()
@@ -139,11 +140,10 @@ class WindowApi:
         self._window.restore()
         self.visible = True
         try:  # bring it in front of other windows too
-            import ctypes
-
-            hwnd = self._window.native.Handle.ToInt32()
-            ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            if hasattr(ctypes, "windll"):
+                hwnd = self._window.native.Handle.ToInt32()
+                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
         except Exception:  # noqa: BLE001
             pass
 

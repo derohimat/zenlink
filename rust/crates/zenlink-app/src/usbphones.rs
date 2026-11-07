@@ -3,20 +3,30 @@
 //! USB debugging is off, or the phone was not plugged in again after turning
 //! it on. Platform layer: Windows only (SetupAPI), read-only, no driver change.
 
+#[cfg(windows)]
 use windows::core::GUID;
+#[cfg(windows)]
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
     SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo, SetupDiGetClassDevsW,
     SetupDiGetDeviceInstanceIdW, DIGCF_PRESENT, SP_DEVINFO_DATA,
 };
 
+#[cfg(windows)]
 /// GUID_DEVCLASS_WPD: "Portable Devices".
 const WPD_CLASS: GUID = GUID::from_u128(0xeec5ad98_8080_425f_922a_dabf3de3f69a);
 
 /// True when a USB portable device that is not an Apple device is present.
+#[cfg(windows)]
 pub fn phone_without_adb() -> bool {
     instance_ids().iter().any(|id| is_android_candidate(id))
 }
 
+#[cfg(not(windows))]
+pub fn phone_without_adb() -> bool {
+    false
+}
+
+#[cfg(windows)]
 /// `USB\VID_0E8D&PID_2008\...` style ids of present portable devices.
 fn instance_ids() -> Vec<String> {
     let mut out = Vec::new();

@@ -6,13 +6,18 @@
 //! the release asset; [`zenlink_core::update`] already refused assets from
 //! anywhere but this repository's release downloads.
 
+#[cfg(windows)]
 use std::ffi::c_void;
+#[cfg(windows)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use windows::core::{HSTRING, PCWSTR};
+#[cfg(windows)]
 use windows::Win32::Networking::WinHttp::*;
+#[cfg(windows)]
 use windows::Win32::Security::Cryptography::*;
 use zenlink_core::update::{self, Asset, Channel, Offer, Release, Version};
 
@@ -49,7 +54,9 @@ pub fn current_version() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("Cargo version")
 }
 
+#[cfg(windows)]
 struct Handle(*mut c_void);
+#[cfg(windows)]
 impl Drop for Handle {
     fn drop(&mut self) {
         if !self.0.is_null() {
@@ -60,10 +67,12 @@ impl Drop for Handle {
     }
 }
 
+#[cfg(windows)]
 fn last_error(what: &str) -> String {
     format!("{what}: {}", windows::core::Error::from_thread())
 }
 
+#[cfg(windows)]
 /// An open HTTPS GET with a 2xx answer; [`Response::read`] streams the body.
 struct Response {
     _session: Handle,
@@ -72,6 +81,7 @@ struct Response {
     pub length: Option<u64>,
 }
 
+#[cfg(windows)]
 impl Response {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, String> {
         let mut n = 0u32;
@@ -88,6 +98,7 @@ impl Response {
     }
 }
 
+#[cfg(windows)]
 /// Splits `https://host/path` (only HTTPS is accepted).
 fn split_url(url: &str) -> Option<(&str, &str)> {
     let rest = url.strip_prefix("https://")?;
@@ -98,6 +109,7 @@ fn split_url(url: &str) -> Option<(&str, &str)> {
     (!host.is_empty() && !host.contains(['@', ':', ' ', '?', '#'])).then_some((host, path))
 }
 
+#[cfg(windows)]
 fn get(url: &str, accept: &str) -> Result<Response, String> {
     let (host, path) = split_url(url).ok_or("not an https URL")?;
     let agent = HSTRING::from(format!("ZenLink-Updater/{}", env!("CARGO_PKG_VERSION")));
@@ -112,7 +124,6 @@ fn get(url: &str, accept: &str) -> Result<Response, String> {
         if session.0.is_null() {
             return Err(last_error("WinHttpOpen"));
         }
-        // TLS 1.2 and 1.3 only; resolve, connect, send 15 s, receive 30 s.
         let protocols = (WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_3)
             .to_le_bytes();
         let _ = WinHttpSetOption(
@@ -142,8 +153,6 @@ fn get(url: &str, accept: &str) -> Result<Response, String> {
         if request.0.is_null() {
             return Err(last_error("WinHttpOpenRequest"));
         }
-        // Redirects (GitHub sends downloads to its asset host) stay on
-        // HTTPS: WinHTTP's default policy refuses HTTPS to HTTP.
         let headers: Vec<u16> = format!("Accept: {accept}\r\n").encode_utf16().collect();
         WinHttpSendRequest(request.0, Some(&headers), None, 0, 0, 0)
             .map_err(|e| format!("send: {e}"))?;
@@ -179,6 +188,7 @@ fn get(url: &str, accept: &str) -> Result<Response, String> {
 
 /// The releases feed: GitHub's API, or `ZL_UPDATE_FEED` (a local JSON file
 /// or another https URL) for tests.
+#[cfg(windows)]
 fn feed() -> Result<serde_json::Value, String> {
     let src = std::env::var("ZL_UPDATE_FEED").unwrap_or_else(|_| update::RELEASES_URL.to_string());
     let bytes = if src.starts_with("https://") {
@@ -202,6 +212,24 @@ fn feed() -> Result<serde_json::Value, String> {
     serde_json::from_slice(&bytes).map_err(|e| format!("feed: {e}"))
 }
 
+#[cfg(not(windows))]
+fn feed() -> Result<serde_json::Value, String> {
+    let src = std::env::var("ZL_UPDATE_FEED").unwrap_or_else(|_| update::RELEASES_URL.to_string());
+    let bytes = if src.starts_with("https://") {
+        let out = std::process::Command::new("curl")
+            .args(["-sSL", "-H", "Accept: application/vnd.github+json", &src])
+            .output()
+            .map_err(|e| format!("curl: {e}"))?;
+        if !out.status.success() {
+            return Err("curl failed".into());
+        }
+        out.stdout
+    } else {
+        std::fs::read(&src).map_err(|e| format!("{src}: {e}"))?
+    };
+    serde_json::from_slice(&bytes).map_err(|e| format!("feed: {e}"))
+}
+
 /// Asks GitHub what to offer this build on `channel`.
 pub fn check(channel: Channel) -> Result<Offer, String> {
     Ok(update::pick(&feed()?, &current_version(), channel))
@@ -216,7 +244,9 @@ pub fn asset_for(kind: Kind, r: &Release) -> Option<&Asset> {
     }
 }
 
+#[cfg(windows)]
 struct Sha256(BCRYPT_HASH_HANDLE);
+#[cfg(windows)]
 impl Sha256 {
     fn new() -> Result<Self, String> {
         let mut h = BCRYPT_HASH_HANDLE::default();
@@ -237,6 +267,7 @@ impl Sha256 {
         Ok(out.iter().map(|b| format!("{b:02x}")).collect())
     }
 }
+#[cfg(windows)]
 impl Drop for Sha256 {
     fn drop(&mut self) {
         unsafe {
@@ -245,8 +276,117 @@ impl Drop for Sha256 {
     }
 }
 
+#[cfg(not(windows))]
+struct Sha256 {
+    h: [u32; 8],
+    block: [u8; 64],
+    block_len: usize,
+    total_len: u64,
+}
+
+#[cfg(not(windows))]
+impl Sha256 {
+    fn new() -> Result<Self, String> {
+        Ok(Self {
+            h: [
+                0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+            ],
+            block: [0u8; 64],
+            block_len: 0,
+            total_len: 0,
+        })
+    }
+
+    fn update(&mut self, mut data: &[u8]) -> Result<(), String> {
+        self.total_len += data.len() as u64;
+        while !data.is_empty() {
+            if self.block_len == 0 && data.len() >= 64 {
+                self.transform(&data[..64]);
+                data = &data[64..];
+            } else {
+                let want = 64 - self.block_len;
+                let take = want.min(data.len());
+                self.block[self.block_len..self.block_len + take].copy_from_slice(&data[..take]);
+                self.block_len += take;
+                data = &data[take..];
+                if self.block_len == 64 {
+                    let block = self.block;
+                    self.transform(&block);
+                    self.block_len = 0;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn transform(&mut self, block: &[u8]) {
+        const K: [u32; 64] = [
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        ];
+
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes(block[i * 4..i * 4 + 4].try_into().unwrap());
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        }
+
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = self.h;
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ (!e & g);
+            let temp1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        self.h[0] = self.h[0].wrapping_add(a);
+        self.h[1] = self.h[1].wrapping_add(b);
+        self.h[2] = self.h[2].wrapping_add(c);
+        self.h[3] = self.h[3].wrapping_add(d);
+        self.h[4] = self.h[4].wrapping_add(e);
+        self.h[5] = self.h[5].wrapping_add(f);
+        self.h[6] = self.h[6].wrapping_add(g);
+        self.h[7] = self.h[7].wrapping_add(h);
+    }
+
+    fn hex(mut self) -> Result<String, String> {
+        let bit_len = self.total_len * 8;
+        let mut pad = [0u8; 128];
+        pad[0] = 0x80;
+        let pad_len = if self.block_len < 56 {
+            56 - self.block_len
+        } else {
+            120 - self.block_len
+        };
+        self.update(&pad[..pad_len])?;
+        self.update(&bit_len.to_be_bytes())?;
+        Ok(self.h.iter().map(|w| format!("{w:08x}")).collect())
+    }
+}
+
 /// SHA-256 of `data`, lower-case hex.
-#[cfg(test)]
 pub fn sha256_hex(data: &[u8]) -> Result<String, String> {
     let mut h = Sha256::new()?;
     h.update(data)?;
@@ -256,6 +396,7 @@ pub fn sha256_hex(data: &[u8]) -> Result<String, String> {
 /// Downloads `a` to `dest` (through `dest.part`) and checks its size and
 /// SHA-256. `progress(done, total)` runs about every 100 ms. On any problem
 /// the partial file is removed and nothing is left at `dest`.
+#[cfg(windows)]
 pub fn download(a: &Asset, dest: &Path, progress: &dyn Fn(u64, u64)) -> Result<(), String> {
     let part = dest.with_extension("part");
     let result = (|| {
@@ -307,6 +448,28 @@ pub fn download(a: &Asset, dest: &Path, progress: &dyn Fn(u64, u64)) -> Result<(
     result
 }
 
+#[cfg(not(windows))]
+pub fn download(a: &Asset, dest: &Path, progress: &dyn Fn(u64, u64)) -> Result<(), String> {
+    let part = dest.with_extension("part");
+    let res = std::process::Command::new("curl")
+        .args(["-sSL", "-o", part.to_str().ok_or("path")?, &a.url])
+        .output()
+        .map_err(|e| format!("curl: {e}"))?;
+    if !res.status.success() {
+        let _ = std::fs::remove_file(&part);
+        return Err("download failed".into());
+    }
+    let data = std::fs::read(&part).map_err(|e| format!("{e}"))?;
+    let got = sha256_hex(&data)?;
+    if got != a.sha256 {
+        let _ = std::fs::remove_file(&part);
+        return Err(format!("SHA-256 mismatch ({got})"));
+    }
+    progress(a.size, a.size);
+    let _ = std::fs::remove_file(dest);
+    std::fs::rename(&part, dest).map_err(|e| format!("{}: {e}", dest.display()))
+}
+
 /// Where an update for `kind` is downloaded.
 pub fn download_path(kind: Kind, a: &Asset) -> Result<PathBuf, String> {
     match kind {
@@ -333,9 +496,6 @@ pub fn launch(kind: Kind, file: &Path, replace: bool) -> Result<(), String> {
     match kind {
         _ if !replace => {}
         Kind::Installed => {
-            // Same AppId: upgrades in place and keeps the settings. The
-            // firewall task is left out so the update asks for no admin
-            // rights (the rule from the first install stays).
             c.args([
                 "/SILENT",
                 "/SP-",
@@ -388,8 +548,6 @@ pub fn finish_portable_update() {
     }
     if old.exists() {
         log::warn!("update: could not remove {}", old.display());
-    } else {
-        log::info!("update: removed {}", old.display());
     }
 }
 
@@ -398,7 +556,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sha256_matches_known_values() {
+    fn sha256_known_vectors() {
         assert_eq!(
             sha256_hex(b"").unwrap(),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -410,6 +568,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn only_https_urls_with_a_plain_host() {
         assert_eq!(
             split_url("https://api.github.com/repos/x?y=1"),
@@ -422,6 +581,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn replace_only_an_exe_next_to_this_one() {
         let me = std::env::current_exe().unwrap();
         let dir = me.parent().unwrap();
@@ -441,6 +601,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn a_bad_download_leaves_nothing() {
         let dir = std::env::temp_dir().join("zl-update-test");
         std::fs::create_dir_all(&dir).unwrap();
@@ -461,6 +622,7 @@ mod tests {
     /// Portable.exe through WinHTTP (GitHub redirects it to its asset
     /// host), checking size and SHA-256. The file is deleted, never run.
     #[test]
+    #[cfg(windows)]
     #[ignore]
     fn live_download() {
         let list = feed().unwrap();

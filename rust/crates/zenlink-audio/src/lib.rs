@@ -43,6 +43,7 @@ pub(crate) struct Shared {
 impl Shared {
     /// Called by the backend for each block it needs (interleaved stereo).
     /// Writes silence when the buffer cannot fill it.
+    #[allow(dead_code)]
     pub fn render(&self, out: &mut [i16]) {
         let played = self.buf.lock().unwrap().pull(out, Instant::now());
         let volume = f32::from_bits(self.volume.load(Relaxed));
@@ -67,24 +68,28 @@ pub struct Player {
 impl Player {
     /// Opens the default output. Fails when no backend or device works.
     pub fn start() -> Result<Self, String> {
-        let shared = Arc::new(Shared {
-            buf: Mutex::new(JitterBuffer::default()),
-            stop: AtomicBool::new(false),
-            volume: AtomicU32::new(1.0f32.to_bits()),
-            muted: AtomicBool::new(false),
-            running: AtomicBool::new(false),
-            output_ms: AtomicU32::new(0),
-        });
-        #[cfg(windows)]
-        let thread = wasapi::spawn(shared.clone())?;
         #[cfg(not(windows))]
-        let thread: JoinHandle<()> = return Err("no sound backend on this platform yet".into());
-        Ok(Self {
-            shared,
-            thread: Some(thread),
-            report_at: Instant::now(),
-            reported: (0, 0),
-        })
+        {
+            return Err("no sound backend on this platform yet".into());
+        }
+        #[cfg(windows)]
+        {
+            let shared = Arc::new(Shared {
+                buf: Mutex::new(JitterBuffer::default()),
+                stop: AtomicBool::new(false),
+                volume: AtomicU32::new(1.0f32.to_bits()),
+                muted: AtomicBool::new(false),
+                running: AtomicBool::new(false),
+                output_ms: AtomicU32::new(0),
+            });
+            let thread = wasapi::spawn(shared.clone())?;
+            Ok(Self {
+                shared,
+                thread: Some(thread),
+                report_at: Instant::now(),
+                reported: (0, 0),
+            })
+        }
     }
 
     /// Adds s16le stereo bytes. Logs gaps and dropped sound at most every 5 s.
@@ -156,6 +161,7 @@ impl Drop for Player {
 }
 
 /// Samples per block for a frame count (interleaved stereo).
+#[allow(dead_code)]
 pub(crate) fn samples(frames: usize) -> usize {
     frames * CHANNELS
 }

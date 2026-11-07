@@ -17,7 +17,13 @@ build.log
 airplay.json
 allow-airplay.cmd
 native/playfair/*.obj
+native/playfair/*.dylib
+zenlink/airplay/*.dylib
 crash.log
+*.log
+.agents/
+TEST_INFRA.md
+TEST_READY.md
 
 # adb downloaded by Start ZenLink.bat (tools/get-adb.ps1)
 third_party/platform-tools/

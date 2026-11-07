@@ -21,11 +21,16 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+#[cfg(windows)]
 use slint::winit_030::winit::platform::windows::{BackdropType, WindowAttributesExtWindows};
 use slint::winit_030::winit::window::WindowLevel;
 use slint::winit_030::WinitWindowAccessor;
 use slint::{ComponentHandle, LogicalSize, Model};
-use windows::Win32::Foundation::HWND;
+#[cfg(windows)]
+pub use windows::Win32::Foundation::HWND;
+#[cfg(not(windows))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HWND(pub isize);
 
 use zenlink_core::api::Api;
 use zenlink_core::sidecar::Sidecar;
@@ -63,6 +68,7 @@ impl log::Log for FileLog {
 }
 
 /// Local wall-clock time "YYYY-MM-DD HH:MM:SS" (no date crate needed).
+#[cfg(windows)]
 fn local_time() -> String {
     use windows::Win32::System::SystemInformation::GetLocalTime;
     let t = unsafe { GetLocalTime() };
@@ -70,6 +76,29 @@ fn local_time() -> String {
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
         t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond
     )
+}
+
+#[cfg(not(windows))]
+fn local_time() -> String {
+    use std::time::SystemTime;
+    let d = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default();
+    let secs = d.as_secs();
+    let days = (secs / 86400) as i64;
+    let day_secs = (secs % 86400) as u32;
+    let hour = day_secs / 3600;
+    let min = (day_secs % 3600) / 60;
+    let sec = day_secs % 60;
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02} {hour:02}:{min:02}:{sec:02}")
 }
 
 fn init_log() {
@@ -98,6 +127,7 @@ fn init_log_named(name: &str) {
 }
 
 /// "Windows build 26200.1234 (25H2)" from the registry, for bug reports.
+#[cfg(windows)]
 fn windows_version() -> String {
     use windows::core::{w, PCWSTR};
     use windows::Win32::System::Registry::{
@@ -144,6 +174,16 @@ fn windows_version() -> String {
         ubr,
         text(w!("DisplayVersion"))
     )
+}
+
+#[cfg(target_os = "macos")]
+fn windows_version() -> String {
+    "macOS Apple Silicon (Darwin)".to_string()
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn windows_version() -> String {
+    "Unix".to_string()
 }
 
 #[derive(Default)]
@@ -307,6 +347,7 @@ fn slide_ease(x: f32) -> f32 {
     bez((lo + hi) / 2.0, y1, y2)
 }
 
+#[cfg(windows)]
 fn monitor_rect(ui: &AppWindow) -> Option<(i32, i32, u32, u32)> {
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -331,21 +372,30 @@ fn monitor_rect(ui: &AppWindow) -> Option<(i32, i32, u32, u32)> {
     }
 }
 
+#[cfg(not(windows))]
+fn monitor_rect(_ui: &AppWindow) -> Option<(i32, i32, u32, u32)> {
+    None
+}
+
 thread_local! {
     static APP: RefCell<App> = RefCell::new(App::default());
     static START: Instant = Instant::now();
 }
 
-fn hwnd_of(w: &slint::Window) -> Option<HWND> {
+pub fn hwnd_of(w: &slint::Window) -> Option<HWND> {
     use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
     w.with_winit_window(|ww| match ww.window_handle().ok()?.as_raw() {
+        #[cfg(windows)]
         RawWindowHandle::Win32(h) => Some(HWND(h.hwnd.get() as _)),
+        #[cfg(target_os = "macos")]
+        RawWindowHandle::AppKit(h) => Some(HWND(h.ns_view.as_ptr() as isize)),
         _ => None,
     })
     .flatten()
 }
 
 /// Windows "app mode" (Settings > Personalization > Colors).
+#[cfg(windows)]
 fn system_dark() -> bool {
     use windows::core::w;
     use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
@@ -363,6 +413,11 @@ fn system_dark() -> bool {
         );
     }
     v == 0
+}
+
+#[cfg(not(windows))]
+fn system_dark() -> bool {
+    true
 }
 
 fn apply_look(ui: &AppWindow) {
@@ -898,6 +953,7 @@ fn effective_rotation(p: &Prefs, shown: (u32, u32), device_rotation: u32) -> u32
 }
 
 /// Logical work area of the monitor the window is on.
+#[cfg(windows)]
 fn work_area(ui: &AppWindow) -> Option<(f32, f32, f32, f32)> {
     use windows::Win32::Graphics::Gdi::{
         GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -921,6 +977,11 @@ fn work_area(ui: &AppWindow) -> Option<(f32, f32, f32, f32)> {
             (r.bottom - r.top) as f32 / sf,
         ))
     }
+}
+
+#[cfg(not(windows))]
+fn work_area(_ui: &AppWindow) -> Option<(f32, f32, f32, f32)> {
+    None
 }
 
 /// Size the window around the picture (portrait or landscape).
@@ -1116,6 +1177,7 @@ fn drivers_summary(ui: &AppWindow, d: &Value) -> String {
 
 /// B-27: without Media Foundation (Windows N/KN without the Media Feature
 /// Pack) there is no picture. Say so and open the official place to add it.
+#[cfg(windows)]
 fn check_media_foundation(ui: &AppWindow) {
     let ok = zenlink_video::media_foundation_present() && {
         // On its own thread: Media Foundation and COM, see hevc_ok.
@@ -1139,6 +1201,9 @@ fn check_media_foundation(ui: &AppWindow) {
         tr_ui(ui, "Nanti", "Later"),
     );
 }
+
+#[cfg(not(windows))]
+fn check_media_foundation(_ui: &AppWindow) {}
 
 fn open_sheet(ui: &AppWindow, kind: &str, title: String, body: String, ok: String, cancel: String) {
     APP.with_borrow_mut(|a| a.sheet = Some(kind.into()));
@@ -1327,11 +1392,18 @@ fn icon_font() -> &'static str {
     if std::env::var("ZL_ICON_FONT").as_deref() == Ok("mdl2") {
         return pick_icon_font(false);
     }
-    let fonts = std::env::var_os("WINDIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| r"C:\Windows".into())
-        .join("Fonts");
-    pick_icon_font(fonts.join("SegoeIcons.ttf").exists())
+    #[cfg(windows)]
+    {
+        let fonts = std::env::var_os("WINDIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| r"C:\Windows".into())
+            .join("Fonts");
+        pick_icon_font(fonts.join("SegoeIcons.ttf").exists())
+    }
+    #[cfg(not(windows))]
+    {
+        "Segoe Fluent Icons"
+    }
 }
 
 fn pick_icon_font(has_fluent: bool) -> &'static str {
@@ -1917,6 +1989,7 @@ fn copy_screen_text(ui: &AppWindow) {
 }
 
 /// Puts `text` on the Windows clipboard. False when the clipboard is busy.
+#[cfg(windows)]
 fn set_pc_clipboard_text(text: &str) -> bool {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::DataExchange::{
@@ -1948,7 +2021,26 @@ fn set_pc_clipboard_text(text: &str) -> bool {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn set_pc_clipboard_text(text: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() else {
+        return false;
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(text.as_bytes());
+    }
+    child.wait().map(|s| s.success()).unwrap_or(false)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn set_pc_clipboard_text(_text: &str) -> bool {
+    false
+}
+
 /// Text on the Windows clipboard (Ctrl+V to Android), `None` without text.
+#[cfg(windows)]
 fn pc_clipboard_text() -> Option<String> {
     use windows::Win32::Foundation::HGLOBAL;
     use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
@@ -1973,6 +2065,24 @@ fn pc_clipboard_text() -> Option<String> {
         let _ = CloseClipboard();
         text.filter(|s| !s.is_empty())
     }
+}
+
+#[cfg(target_os = "macos")]
+fn pc_clipboard_text() -> Option<String> {
+    use std::process::Command;
+    let out = Command::new("pbpaste").output().ok()?;
+    if out.status.success() {
+        let s = String::from_utf8_lossy(&out.stdout).to_string();
+        if !s.is_empty() {
+            return Some(s);
+        }
+    }
+    None
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn pc_clipboard_text() -> Option<String> {
+    None
 }
 
 /// The settings a running Android session depends on.
@@ -2941,6 +3051,7 @@ fn tray_labels(p: &Prefs) -> (&'static str, &'static str) {
 
 /// "Close to the tray": hide the window, keep the session (sound keeps
 /// playing; Stop or Quit from the tray ends it).
+#[cfg(windows)]
 fn hide_to_tray(ui: &AppWindow) {
     use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
     if let Some(h) = hwnd_of(ui.window()) {
@@ -2949,7 +3060,14 @@ fn hide_to_tray(ui: &AppWindow) {
     }
 }
 
+#[cfg(not(windows))]
+fn hide_to_tray(ui: &AppWindow) {
+    let _ = ui.window().hide();
+    tray::HIDDEN.store(true, Relaxed);
+}
+
 /// Brings the window back (from the tray, minimised or behind others).
+#[cfg(windows)]
 fn show_window(ui: &AppWindow) {
     use windows::Win32::UI::WindowsAndMessaging::{
         IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
@@ -2968,6 +3086,12 @@ fn show_window(ui: &AppWindow) {
         }
         tray::HIDDEN.store(false, Relaxed);
     }
+}
+
+#[cfg(not(windows))]
+fn show_window(ui: &AppWindow) {
+    let _ = ui.window().show();
+    tray::HIDDEN.store(false, Relaxed);
 }
 
 fn quit_app(ui: &AppWindow) {
@@ -3218,10 +3342,12 @@ fn main() -> Result<(), slint::PlatformError> {
         .backend_name("winit".into())
         .renderer_name("femtovg".into())
         .with_winit_window_attributes_hook(|attrs| {
-            attrs
+            let attrs = attrs
                 .with_transparent(true)
-                .with_decorations(false)
-                .with_system_backdrop(BackdropType::None)
+                .with_decorations(false);
+            #[cfg(windows)]
+            let attrs = attrs.with_system_backdrop(BackdropType::None);
+            attrs
         })
         .select()?;
 
@@ -4683,6 +4809,12 @@ mod icon_tests {
     fn windows_10_falls_back_to_mdl2() {
         assert_eq!(super::pick_icon_font(false), "Segoe MDL2 Assets");
         assert_eq!(super::pick_icon_font(true), "Segoe Fluent Icons");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn macos_uses_fluent_icons() {
+        assert_eq!(super::icon_font(), "Segoe Fluent Icons");
     }
 }
 

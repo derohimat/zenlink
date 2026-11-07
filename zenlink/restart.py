@@ -25,12 +25,16 @@ def spawn_new_instance() -> None:
     module = (__package__ or "zenlink").split(".")[0]
     env = dict(os.environ, **{WAIT_ENV: "1"})
     argv = [sys.executable, *sys.argv[1:]] if getattr(sys, "frozen", False) else [exe, "-m", module, *sys.argv[1:]]
-    subprocess.Popen(
-        argv,
-        cwd=str(APP_ROOT), env=env,
-        creationflags=0x08000000 | 0x00000008 | 0x00000200,  # no window, detached, new group
-        close_fds=True,
-    )
+    kwargs: dict[str, object] = {
+        "cwd": str(APP_ROOT),
+        "env": env,
+        "close_fds": True,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = 0x08000000 | 0x00000008 | 0x00000200  # no window, detached, new group
+    else:
+        kwargs["start_new_session"] = True
+    subprocess.Popen(argv, **kwargs)
 
 
 def wait_for_port(host: str, port: int, timeout: float = 15.0) -> None:

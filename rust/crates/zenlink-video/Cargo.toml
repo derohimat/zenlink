@@ -10,7 +10,7 @@ description = "Native video path: Media Foundation decode, D3D11 video processor
 zenlink-core = { path = "../zenlink-core" }
 log = { workspace = true }
 
-[dependencies.windows]
+[target.'cfg(windows)'.dependencies.windows]
 workspace = true
 features = [
     "Win32_Foundation",

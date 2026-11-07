@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.5.2
+
+### Added
+- **Native macOS Support (Apple Silicon arm64).** ZenLink now runs natively on macOS (Apple Silicon arm64 / `aarch64-apple-darwin`), complete with Slint GUI, AppKit window handle integration, and native macOS clipboard.
+- **Embedded Segoe Fluent Icons.** Bundled `Segoe Fluent Icons` font directly into the Slint application binary so that all action, navigation, and status icons render natively on macOS without missing glyphs.
+- **macOS Developer & Helper Tools.**
+  - `tools/get-adb`: Native POSIX bash script that downloads official Google Darwin platform-tools, verifies SHA-256 checksum, and checks Apple Developer ID codesign (`Google LLC`).
+  - `tools/ocr.swift` & `zenlink/ocr.py`: Apple Vision framework (`VNRecognizeTextRequest`) OCR extraction with graceful fallback.
+  - `Start ZenLink.sh` & `run.sh`: Native launcher scripts for macOS developer workflow and console diagnostics.
+  - `native/playfair/build.sh`: Builds native `libplayfair.dylib` for AirPlay decryption on Apple Silicon.
+- **macOS Installer (`.dmg`).** Added automated packaging for macOS creating `ZenLink.app` bundle and compressed `.dmg` disk image.
+
+## 2.5.1
+- Pick connected iPhone / iPad from the Apple screen.
+- Android apps launcher: searchable grid of installed apps with virtual display windows.
+- Drag and drop files to mirrored devices.
+- In-app update check and background log directory consolidation.
+
 ## 2.2.2
 
 ### Added

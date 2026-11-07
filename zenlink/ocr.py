@@ -12,6 +12,8 @@ import logging
 import os
 import re
 import subprocess
+import shutil
+import sys
 import tempfile
 import threading
 
@@ -20,7 +22,7 @@ from zenlink.paths import APP_ROOT
 log = logging.getLogger(__name__)
 
 SCRIPT = APP_ROOT / "tools" / "ocr.ps1"
-_NO_WINDOW = 0x08000000
+_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 
 def _norm(line: str) -> str:
@@ -49,14 +51,40 @@ def recognize_png(png: bytes) -> list[str]:
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(png)
-        proc = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT), "-ImagePath", path],
-            capture_output=True, timeout=30, creationflags=_NO_WINDOW,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(proc.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] or ["OCR failed"])
-        text = proc.stdout.decode("utf-8", "replace")
-        return [line.rstrip() for line in text.splitlines() if line.strip()]
+
+        if sys.platform == "win32":
+            if not SCRIPT.exists():
+                return []
+            proc = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(SCRIPT), "-ImagePath", path],
+                capture_output=True, timeout=30, creationflags=_NO_WINDOW,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr.decode("utf-8", "replace").strip().splitlines()[-1:] or ["OCR failed"])
+            text = proc.stdout.decode("utf-8", "replace")
+            return [line.rstrip() for line in text.splitlines() if line.strip()]
+
+        elif sys.platform == "darwin":
+            ocr_bin = APP_ROOT / "tools" / "ocr-darwin"
+            ocr_swift = APP_ROOT / "tools" / "ocr.swift"
+            if ocr_bin.is_file() and os.access(ocr_bin, os.X_OK):
+                cmd = [str(ocr_bin), path]
+            elif ocr_swift.is_file() and shutil.which("swift"):
+                cmd = ["swift", str(ocr_swift), path]
+            else:
+                log.warning("ocr: No macOS OCR engine found (tools/ocr-darwin or swift not available)")
+                return []
+
+            proc = subprocess.run(cmd, capture_output=True, timeout=30)
+            if proc.returncode != 0:
+                log.warning("ocr: native OCR exited with %d: %s", proc.returncode, proc.stderr.decode("utf-8", "replace"))
+                return []
+            text = proc.stdout.decode("utf-8", "replace")
+            return [line.rstrip() for line in text.splitlines() if line.strip()]
+
+        else:
+            log.info("ocr: Not supported on %s", sys.platform)
+            return []
     finally:
         try:
             os.remove(path)

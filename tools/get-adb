@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Downloads Google's official Android platform-tools (adb) for macOS (Darwin).
+# Exit codes: 0 = adb ready (or already there), 1 = download/check failed.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    echo "Usage: $(basename "$0") [DEST_DIR] [REVISION] [SHA256]"
+    echo "Downloads official Google Android platform-tools (adb) for macOS."
+    exit 0
+fi
+
+DEST="${1:-$ROOT_DIR/third_party/platform-tools}"
+REVISION="${2:-37.0.1}"
+SHA256="${3:-ee39ad5967e95c2a07f04dbcbde96b1a0c916ba376096db5d2f498b7727a5d1d}"
+
+URL="https://dl.google.com/android/repository/platform-tools_r${REVISION}-darwin.zip"
+
+if [[ -f "$DEST/adb" && -f "$DEST/NOTICE.txt" && -x "$DEST/adb" ]]; then
+    echo "  - adb: OK ($DEST/adb)"
+    exit 0
+fi
+
+TMP_DIR="$(mktemp -d /tmp/zenlink-adb-XXXXXX)"
+cleanup() {
+    rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+ZIP_PATH="$TMP_DIR/platform-tools.zip"
+echo "  - Downloading adb (Google platform-tools r$REVISION for macOS, about 16 MB)..."
+echo "    $URL"
+
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$URL" -o "$ZIP_PATH"
+elif command -v wget >/dev/null 2>&1; then
+    wget -q "$URL" -O "$ZIP_PATH"
+else
+    echo "Error: Neither curl nor wget is available." >&2
+    exit 1
+fi
+
+# Verify SHA-256
+if command -v shasum >/dev/null 2>&1; then
+    GOT_HASH="$(shasum -a 256 "$ZIP_PATH" | awk '{print tolower($1)}')"
+elif command -v sha256sum >/dev/null 2>&1; then
+    GOT_HASH="$(sha256sum "$ZIP_PATH" | awk '{print tolower($1)}')"
+else
+    echo "Error: Neither shasum nor sha256sum is available." >&2
+    exit 1
+fi
+
+EXPECTED_HASH="$(echo "$SHA256" | tr '[:upper:]' '[:lower:]')"
+if [[ "$GOT_HASH" != "$EXPECTED_HASH" ]]; then
+    echo "    SHA-256 does not match ($GOT_HASH). Expected $EXPECTED_HASH. Nothing was installed." >&2
+    exit 1
+fi
+
+mkdir -p "$DEST"
+unzip -q -o -j "$ZIP_PATH" "platform-tools/adb" -d "$DEST"
+unzip -q -o -j "$ZIP_PATH" "platform-tools/NOTICE.txt" -d "$DEST"
+chmod +x "$DEST/adb"
+
+# Verify Apple Code Signature
+if command -v codesign >/dev/null 2>&1; then
+    if ! codesign -v "$DEST/adb" 2>/dev/null; then
+        echo "    adb code signature is invalid. Removing." >&2
+        rm -f "$DEST/adb" "$DEST/NOTICE.txt"
+        exit 1
+    fi
+    SIG_INFO="$(codesign -dvv "$DEST/adb" 2>&1 || true)"
+    if [[ "$SIG_INFO" != *"Google"* ]]; then
+        echo "    adb is not signed by Google LLC. Removing." >&2
+        rm -f "$DEST/adb" "$DEST/NOTICE.txt"
+        exit 1
+    fi
+fi
+
+echo "  - adb: installed in $DEST"
+exit 0

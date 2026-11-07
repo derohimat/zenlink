@@ -9,12 +9,17 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import threading
-import winreg
+
+try:
+    import winreg
+except ImportError:
+    winreg = None
 
 from . import models, usbmuxd
 
-_NO_WINDOW = 0x08000000
+_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 _INFO_KEYS = ("DeviceName", "DeviceClass", "ProductType", "ProductVersion")
 _cache: dict[str, dict] = {}
 _lock = threading.Lock()
@@ -143,6 +148,8 @@ _APPLE = re.compile(r"^USB\\VID_05AC&PID_12[0-9A-F]{2}\\[^&\\]+$", re.IGNORECASE
 def _taken_over() -> bool:
     """An iPhone/iPad is plugged in but bound to a non-Apple (libusb) driver,
     e.g. after TikTok LIVE Studio's wired cast. Read-only check."""
+    if winreg is None or sys.platform != "win32":
+        return False
     try:
         out = subprocess.run(["pnputil", "/enum-devices", "/connected"], capture_output=True,
                              text=True, timeout=10, creationflags=_NO_WINDOW).stdout

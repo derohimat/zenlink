@@ -37,16 +37,23 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import winreg
+import sys
 
-_NO_WINDOW = 0x08000000
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
+_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 _PARENT = re.compile(r"^USB\\VID_05AC&PID_(12[0-9A-F]{2})\\([^&\\]+)$", re.IGNORECASE)
 _CHILD = re.compile(r"^USB\\VID_05AC&PID_(12[0-9A-F]{2})&MI_([0-9A-F]{2})\\", re.IGNORECASE)
 _FAMILY_BY_PID = {"12A8": "iPhone", "12AB": "iPad"}
-_SYSTEM32 = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "System32")
+_SYSTEM32 = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "System32") if sys.platform == "win32" else ""
 
 
 def _value(key, name):
+    if not winreg:
+        return None
     try:
         return winreg.QueryValueEx(key, name)[0]
     except OSError:
@@ -62,6 +69,8 @@ def _list(value) -> list[str]:
 
 
 def _enum_key(instance: str) -> dict:
+    if not winreg or sys.platform != "win32":
+        return {"service": "", "upper": [], "lower": [], "desc": "", "driver": ""}
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, rf"SYSTEM\CurrentControlSet\Enum\{instance}") as key:
             return {
@@ -85,6 +94,8 @@ _CANDIDATE = re.compile(r"^VID_05AC&PID_12[0-9A-F]{2}(&MI_[0-9A-F]{2})?$", re.IG
 
 def _devnode_status(instance: str) -> str | None:
     """"Started", "Problem (code N)" or "Stopped" for a connected device; None when absent."""
+    if sys.platform != "win32":
+        return None
     import ctypes
     from ctypes import wintypes
 
@@ -102,6 +113,8 @@ def _devnode_status(instance: str) -> str | None:
 
 
 def _subkeys(key) -> list[str]:
+    if not winreg or sys.platform != "win32":
+        return []
     names, index = [], 0
     while True:
         try:
@@ -113,6 +126,8 @@ def _subkeys(key) -> list[str]:
 
 def _connected_instances() -> list[tuple[str, str]]:
     """(instance id, status) of connected Apple USB device nodes."""
+    if not winreg or sys.platform != "win32":
+        return []
     found: list[tuple[str, str]] = []
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Enum\USB") as usb:
@@ -133,6 +148,8 @@ def _connected_instances() -> list[tuple[str, str]]:
 def _service_state(name: str) -> dict:
     """Installed / start type of a service from the registry; running from sc."""
     info = {"installed": False, "running": False}
+    if not winreg or sys.platform != "win32":
+        return info
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, rf"SYSTEM\CurrentControlSet\Services\{name}") as key:
             info["installed"] = True
@@ -155,6 +172,17 @@ ZADIG_URL = "https://zadig.akeo.ie/"  # official Zadig (GPL-3.0, pbatard/libwdi)
 
 
 def libusb0_status() -> dict:
+    if sys.platform != "win32":
+        return {
+            "service": False,
+            "sys": False,
+            "dll": False,
+            "dllPath": "",
+            "bundled": False,
+            "installed": False,
+            "available": False,
+            "zadig": True,
+        }
     service = _service_state("libusb0")
     sys_path = os.path.join(_SYSTEM32, "drivers", "libusb0.sys")
     dll_path = os.path.join(_SYSTEM32, "libusb0.dll")
@@ -183,6 +211,8 @@ def libusb0_packages() -> dict[str, str]:
     device model (e.g. ``VID_05AC&PID_12A8`` for iPhone), so an iPad needs its
     own. Read-only: reads the published ``%WINDIR%\\INF\\oem*.inf`` files directly,
     because pnputil's text output is translated on non-English Windows."""
+    if sys.platform != "win32":
+        return {}
     inf_dir = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "INF")
     try:
         entries = sorted(
